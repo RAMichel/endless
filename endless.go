@@ -15,8 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
 	// "github.com/fvbock/uds-go/introspect"
+	"github.com/DataDog/datadog-go/statsd"
 )
 
 const (
@@ -46,6 +46,8 @@ var (
 
 	hookableSignals []os.Signal
 )
+
+var DDog *statsd.Client = nil
 
 func init() {
 	runningServerReg = sync.RWMutex{}
@@ -150,6 +152,14 @@ nil, in which case the DefaultServeMux is used.
 */
 func ListenAndServe(addr string, handler http.Handler) error {
 	server := NewServer(addr, handler)
+	return server.ListenAndServe()
+}
+
+func ListenAndPlayWithDog(addr string, handler http.Handler, d *statsd.Client) error {
+	server := NewServer(addr, handler)
+	if d != nil {
+		DDog = d
+	}
 	return server.ListenAndServe()
 }
 
@@ -536,10 +546,29 @@ type endlessConn struct {
 
 func (w endlessConn) Close() error {
 	err := w.Conn.Close()
+	fmt.Println("Closing con,", err)
 	if err == nil {
 		w.server.wg.Done()
 	}
 	return err
+}
+
+func (w endlessConn) Read(b []byte) (n int, e error) {
+	n, err := w.Conn.Read(b)
+	// Do DDog
+	if DDog != nil {
+		DDog.Count("conn.recv.bytes", int64(n), nil, 1.0)
+	}
+	return n, err
+}
+
+func (w endlessConn) Write(b []byte) (n int, e error) {
+	n, err := w.Conn.Write(b)
+	// Do DDog
+	if DDog != nil {
+		DDog.Count("conn.send.bytes", int64(n), nil, 1.0)
+	}
+	return n, err
 }
 
 /*
